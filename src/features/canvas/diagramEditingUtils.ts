@@ -158,18 +158,235 @@ export function sendToBack(nodes: Node[], selectedNodes: Node[]): Node[] {
 // Counter to ensure unique IDs even when duplicating rapidly
 let duplicateCounter = 0;
 
-export function duplicateNodes(nodes: Node[], selectedNodes: Node[]): Node[] {
-  const newNodes = [...nodes];
+function nextEdgeId(prefix: string): string {
+  try {
+    return `${prefix}_${crypto.randomUUID?.() ?? Date.now()}_${duplicateCounter++}`;
+  } catch {
+    return `${prefix}_${Date.now()}_${duplicateCounter++}`;
+  }
+}
+
+/** Clipboard / cross-session paste payload (also used for internal fallback). */
+export const DIAGRAM_CLIPBOARD_VERSION = 1 as const;
+
+export type DiagramClipboardPayload = {
+  v: typeof DIAGRAM_CLIPBOARD_VERSION;
+  nodes: Node[];
+  edges: Edge[];
+};
+
+/** Clipboard text wrapper so paste is self-describing in plain text. */
+export const CLIPBOARD_MAGIC = 'mermaid-reactflow-editor:clipboard:v1:';
+
+export function parseDiagramClipboardText(text: string): DiagramClipboardPayload | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith(CLIPBOARD_MAGIC)) return null;
+  try {
+    const raw = JSON.parse(trimmed.slice(CLIPBOARD_MAGIC.length)) as unknown;
+    if (
+      raw &&
+      typeof raw === 'object' &&
+      (raw as DiagramClipboardPayload).v === DIAGRAM_CLIPBOARD_VERSION &&
+      Array.isArray((raw as DiagramClipboardPayload).nodes) &&
+      Array.isArray((raw as DiagramClipboardPayload).edges)
+    ) {
+      return raw as DiagramClipboardPayload;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function serializeDiagramClipboard(payload: DiagramClipboardPayload): string {
+  return CLIPBOARD_MAGIC + JSON.stringify(payload);
+}
+
+/** Nodes and edges fully contained in the current selection (internal wiring only). */
+export function extractSelectedSubgraph(
+  nodes: Node[],
+  edges: Edge[],
+  selectedNodes: Node[]
+): { nodes: Node[]; edges: Edge[] } {
+  const ids = new Set(selectedNodes.map((n) => n.id));
+  const subNodes = selectedNodes.map((n) => JSON.parse(JSON.stringify(n)) as Node);
+  const subEdges = edges
+    .filter((e) => ids.has(e.source) && ids.has(e.target))
+    .map((e) => JSON.parse(JSON.stringify(e)) as Edge);
+  return { nodes: subNodes, edges: subEdges };
+}
+
+export type DuplicateSubgraphOptions = {
+  /** When true (default), only the new copies are selected. */
+  selectDuplicates?: boolean;
+};
+
+/**
+ * Duplicate selected nodes offset by `offset`, including edges whose endpoints are both selected.
+ * Remaps `parentNode` when the parent is part of the same selection.
+ */
+export function duplicateSelectedSubgraph(
+  nodes: Node[],
+  edges: Edge[],
+  selectedNodes: Node[],
+  offset: { x: number; y: number },
+  options: DuplicateSubgraphOptions = {}
+): { newNodes: Node[]; newEdges: Edge[] } {
+  const { selectDuplicates = true } = options;
+  if (selectedNodes.length === 0) return { newNodes: nodes, newEdges: edges };
+
+  const selectedIds = new Set(selectedNodes.map((n) => n.id));
+  const idMap = new Map<string, string>();
   const timestamp = Date.now();
-  selectedNodes.forEach(node => {
-    const newNode: Node = {
+
+  for (const n of selectedNodes) {
+    idMap.set(n.id, `${n.id}_copy_${timestamp}_${duplicateCounter++}`);
+  }
+
+  const deselectOriginals = nodes.map((n) =>
+    selectedIds.has(n.id) ? { ...n, selected: false } : n
+  );
+
+  const duplicates: Node[] = selectedNodes.map((node) => {
+    const newId = idMap.get(node.id)!;
+    const parentId =
+      node.parentNode && selectedIds.has(node.parentNode)
+        ? idMap.get(node.parentNode)
+        : node.parentNode;
+    return {
       ...node,
-      id: `${node.id}_copy_${timestamp}_${duplicateCounter++}`,
-      position: { x: node.position.x + 50, y: node.position.y + 50 },
+      id: newId,
+      position: {
+        x: node.position.x + offset.x,
+        y: node.position.y + offset.y,
+      },
+      parentNode: parentId,
+      selected: selectDuplicates,
+    };
+  });
+
+  const newInternalEdges: Edge[] = [];
+  for (const e of edges) {
+    if (!selectedIds.has(e.source) || !selectedIds.has(e.target)) continue;
+    newInternalEdges.push({
+      ...e,
+      id: nextEdgeId(`e_${e.source}_${e.target}`),
+      source: idMap.get(e.source)!,
+      target: idMap.get(e.target)!,
+      selected: selectDuplicates,
+    });
+  }
+
+  return {
+    newNodes: [...deselectOriginals, ...duplicates],
+    newEdges: [...edges, ...newInternalEdges],
+  };
+}
+
+/**
+ * Alt/Option-drag clone finish: originals jump back to `startPositions`; copies stay at drop
+ * positions (current node positions when this runs). Duplicate internal edges for the copy set.
+ */
+export function finalizeAltDragDuplicate(
+  currentNodes: Node[],
+  currentEdges: Edge[],
+  duplicatedNodeIds: string[],
+  startPositions: Map<string, { x: number; y: number }>
+): { newNodes: Node[]; newEdges: Edge[] } {
+  const selectedIds = new Set(duplicatedNodeIds);
+  const selectedNodes = currentNodes.filter((n) => selectedIds.has(n.id));
+  if (selectedNodes.length === 0) return { newNodes: currentNodes, newEdges: currentEdges };
+
+  const idMap = new Map<string, string>();
+  const timestamp = Date.now();
+  for (const n of selectedNodes) {
+    idMap.set(n.id, `${n.id}_copy_${timestamp}_${duplicateCounter++}`);
+  }
+
+  const duplicates: Node[] = selectedNodes.map((node) => {
+    const newId = idMap.get(node.id)!;
+    const parentId =
+      node.parentNode && selectedIds.has(node.parentNode)
+        ? idMap.get(node.parentNode)
+        : node.parentNode;
+    return {
+      ...node,
+      id: newId,
+      position: { ...node.position },
+      parentNode: parentId,
+      selected: true,
+    };
+  });
+
+  const resetNodes = currentNodes.map((n) => {
+    if (!selectedIds.has(n.id)) return n;
+    const start = startPositions.get(n.id);
+    if (!start) return { ...n, selected: false };
+    return {
+      ...n,
+      position: { x: start.x, y: start.y },
       selected: false,
     };
-    newNodes.push(newNode);
   });
+
+  const newInternalEdges: Edge[] = [];
+  for (const e of currentEdges) {
+    if (!selectedIds.has(e.source) || !selectedIds.has(e.target)) continue;
+    newInternalEdges.push({
+      ...e,
+      id: nextEdgeId(`e_alt_${e.id}`),
+      source: idMap.get(e.source)!,
+      target: idMap.get(e.target)!,
+      selected: false,
+    });
+  }
+
+  return {
+    newNodes: [...resetNodes, ...duplicates],
+    newEdges: [...currentEdges, ...newInternalEdges],
+  };
+}
+
+/** Remap pasted subgraph ids and shift positions (for Cmd+V / paste). */
+export function remapPastedSubgraph(
+  payload: DiagramClipboardPayload,
+  pasteOffset: { x: number; y: number }
+): { nodes: Node[]; edges: Edge[] } {
+  const oldIds = new Set(payload.nodes.map((n) => n.id));
+  const idMap = new Map<string, string>();
+  const ts = Date.now();
+  for (const n of payload.nodes) {
+    idMap.set(n.id, `paste_${n.id}_${ts}_${duplicateCounter++}`);
+  }
+
+  const nodes: Node[] = payload.nodes.map((node) => ({
+    ...node,
+    id: idMap.get(node.id)!,
+    position: {
+      x: node.position.x + pasteOffset.x,
+      y: node.position.y + pasteOffset.y,
+    },
+    parentNode:
+      node.parentNode && oldIds.has(node.parentNode)
+        ? idMap.get(node.parentNode)
+        : undefined,
+    selected: true,
+  }));
+
+  const edges: Edge[] = payload.edges.map((e) => ({
+    ...e,
+    id: nextEdgeId(`paste_e`),
+    source: idMap.get(e.source)!,
+    target: idMap.get(e.target)!,
+    selected: true,
+  }));
+
+  return { nodes, edges };
+}
+
+/** @deprecated Prefer duplicateSelectedSubgraph(nodes, edges, …) for edge-aware duplication. */
+export function duplicateNodes(nodes: Node[], selectedNodes: Node[]): Node[] {
+  const { newNodes } = duplicateSelectedSubgraph(nodes, [], selectedNodes, { x: 50, y: 50 });
   return newNodes;
 }
 

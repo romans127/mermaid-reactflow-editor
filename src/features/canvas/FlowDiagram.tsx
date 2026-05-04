@@ -28,8 +28,15 @@ import {
   alignNodes,
   bringToFront,
   deleteSelected,
+  DIAGRAM_CLIPBOARD_VERSION,
   distributeNodes,
-  duplicateNodes,
+  duplicateSelectedSubgraph,
+  extractSelectedSubgraph,
+  finalizeAltDragDuplicate,
+  type DiagramClipboardPayload,
+  parseDiagramClipboardText,
+  remapPastedSubgraph,
+  serializeDiagramClipboard,
   lockNodes,
   sendToBack,
   unlockNodes,
@@ -44,6 +51,17 @@ import PaletteToolbar from '@/components/PaletteToolbar';
 import { SearchControl } from '@/components/SearchControl';
 import { NodeSearchDialog } from '@/components/NodeSearchDialog';
 import { ALIGNMENT_TYPES, DISTRIBUTION_TYPES, AlignmentType, DistributionType } from '@/constants';
+
+/** Skip canvas shortcuts while typing in Monaco, form fields, or open dialogs. */
+function isCanvasShortcutBlocked(target: EventTarget | null): boolean {
+  if (!target || !(target instanceof HTMLElement)) return true;
+  if (target.closest('[role="dialog"]')) return true;
+  if (target.closest('.monaco-editor')) return true;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
 
 interface FlowDiagramProps {
   nodes: Node[];
@@ -70,6 +88,13 @@ function FlowDiagramInternal({
 }: FlowDiagramProps) {
   const reactFlowInstance = useReactFlow();
   const reactFlowWrapper = useRef<HTMLDivElement | null>(null);
+  const selectedNodesRef = useRef<Node[]>([]);
+  const nodesRef = useRef<Node[]>(initialNodes);
+  const internalClipboardRef = useRef<DiagramClipboardPayload | null>(null);
+  const altDragSessionRef = useRef<{
+    nodeIds: string[];
+    startPositions: Map<string, { x: number; y: number }>;
+  } | null>(null);
 
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
@@ -77,6 +102,9 @@ function FlowDiagramInternal({
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
   const [selectedEdges, setSelectedEdges] = useState<Edge[]>([]);
+
+  selectedNodesRef.current = selectedNodes;
+  nodesRef.current = nodes;
   const [showNodeEditor, setShowNodeEditor] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [edgeLabelEditor, setEdgeLabelEditor] = useState<{
@@ -104,8 +132,27 @@ function FlowDiagramInternal({
     []
   );
 
-  const onNodeDragStart = useCallback(() => setIsDragging(true), []);
-  const onNodeDragStop = useCallback(() => setIsDragging(false), []);
+  const onNodeDragStart = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      setIsDragging(true);
+      if (!interactive || !event.altKey) {
+        altDragSessionRef.current = null;
+        return;
+      }
+      // Alt/Option-drag: snapshot start positions; on drag end originals return here and
+      // duplicates remain at drop positions (edges between selected nodes are duplicated too).
+      const sel = selectedNodesRef.current;
+      const toDup = sel.length > 0 ? sel : [node];
+      const nodeIds = toDup.map((n) => n.id);
+      const startPositions = new Map<string, { x: number; y: number }>();
+      for (const id of nodeIds) {
+        const n = nodesRef.current.find((x) => x.id === id);
+        if (n) startPositions.set(id, { x: n.position.x, y: n.position.y });
+      }
+      altDragSessionRef.current = { nodeIds, startPositions };
+    },
+    [interactive]
+  );
 
   const handleDownloadImage = async () => {
     if (!reactFlowWrapper.current || !reactFlowInstance) return;
@@ -245,10 +292,40 @@ function FlowDiagramInternal({
   }, []);
 
   const onNodeDragStopLocal = useCallback(() => {
-    onNodeDragStop();
-    if (onNodesChangeCallback) onNodesChangeCallback(nodes);
-    if (onEdgesChangeCallback) onEdgesChangeCallback(edges);
-  }, [onNodeDragStop, onNodesChangeCallback, onEdgesChangeCallback, nodes, edges]);
+    setIsDragging(false);
+    const session = altDragSessionRef.current;
+    altDragSessionRef.current = null;
+
+    const latestNodes = reactFlowInstance.getNodes();
+    const latestEdges = reactFlowInstance.getEdges();
+
+    if (session && interactive) {
+      const { newNodes, newEdges } = finalizeAltDragDuplicate(
+        latestNodes,
+        latestEdges,
+        session.nodeIds,
+        session.startPositions
+      );
+      unstable_batchedUpdates(() => {
+        setNodes(newNodes);
+        setEdges(newEdges);
+        setSelectedNodes(newNodes.filter((n) => n.selected));
+        setSelectedEdges(newEdges.filter((e) => e.selected));
+      });
+      if (onNodesChangeCallback) onNodesChangeCallback(newNodes);
+      if (onEdgesChangeCallback) onEdgesChangeCallback(newEdges);
+    } else {
+      if (onNodesChangeCallback) onNodesChangeCallback(latestNodes);
+      if (onEdgesChangeCallback) onEdgesChangeCallback(latestEdges);
+    }
+  }, [
+    interactive,
+    reactFlowInstance,
+    setNodes,
+    setEdges,
+    onNodesChangeCallback,
+    onEdgesChangeCallback,
+  ]);
 
   // Notify parent about selection changes after React has updated local selection state
   useEffect(() => {
@@ -270,19 +347,6 @@ function FlowDiagramInternal({
     [onNodesChangeCallback, setNodes]
   );
 
-  // keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        e.preventDefault();
-        setShowSearch(true);
-      }
-      if (e.key === 'Escape') setShowSearch(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   const edgesWithSelection = useMemo(
     () =>
       edges.map((edge) => ({
@@ -292,7 +356,10 @@ function FlowDiagramInternal({
     [edges, selectedEdgeId]
   );
 
-  const onPaneClick = useCallback(() => setSelectedEdgeId(null), []);
+  const onPaneClick = useCallback(() => {
+    setSelectedEdgeId(null);
+    reactFlowWrapper.current?.focus({ preventScroll: true });
+  }, []);
 
   // toolbar actions
   const onAlignNodes = useCallback(
@@ -326,10 +393,17 @@ function FlowDiagramInternal({
   }, [selectedNodes, nodes, onNodesChangeCallback]);
 
   const onDuplicateNodes = useCallback(() => {
-    const newNodes = duplicateNodes(nodes, selectedNodes);
-    setNodes(newNodes);
+    if (selectedNodes.length === 0) return;
+    const { newNodes, newEdges } = duplicateSelectedSubgraph(nodes, edges, selectedNodes, { x: 50, y: 50 });
+    unstable_batchedUpdates(() => {
+      setNodes(newNodes);
+      setEdges(newEdges);
+      setSelectedNodes(newNodes.filter((n) => n.selected));
+      setSelectedEdges(newEdges.filter((e) => e.selected));
+    });
     if (onNodesChangeCallback) onNodesChangeCallback(newNodes);
-  }, [selectedNodes, nodes, onNodesChangeCallback]);
+    if (onEdgesChangeCallback) onEdgesChangeCallback(newEdges);
+  }, [selectedNodes, nodes, edges, onNodesChangeCallback, onEdgesChangeCallback, setNodes, setEdges]);
 
   const onDeleteSelected = useCallback(() => {
     const { newNodes, newEdges } = deleteSelected(nodes, edges, selectedNodes, selectedEdges);
@@ -340,6 +414,126 @@ function FlowDiagramInternal({
     if (onNodesChangeCallback) onNodesChangeCallback(newNodes);
     if (onEdgesChangeCallback) onEdgesChangeCallback(newEdges);
   }, [selectedNodes, selectedEdges, nodes, edges, onNodesChangeCallback, onEdgesChangeCallback]);
+
+  const onSelectAllCanvas = useCallback(() => {
+    const nextNodes = nodes.map((n) => ({ ...n, selected: true }));
+    const nextEdges = edges.map((e) => ({ ...e, selected: true }));
+    unstable_batchedUpdates(() => {
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      setSelectedNodes(nextNodes);
+      setSelectedEdges(nextEdges);
+    });
+    if (onNodesChangeCallback) onNodesChangeCallback(nextNodes);
+    if (onEdgesChangeCallback) onEdgesChangeCallback(nextEdges);
+  }, [nodes, edges, setNodes, setEdges, onNodesChangeCallback, onEdgesChangeCallback]);
+
+  const copySelection = useCallback(async () => {
+    if (selectedNodes.length === 0) return;
+    const { nodes: sn, edges: se } = extractSelectedSubgraph(nodes, edges, selectedNodes);
+    const payload: DiagramClipboardPayload = { v: DIAGRAM_CLIPBOARD_VERSION, nodes: sn, edges: se };
+    internalClipboardRef.current = payload;
+    const text = serializeDiagramClipboard(payload);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      /* keep internalClipboardRef */
+    }
+  }, [nodes, edges, selectedNodes]);
+
+  const cutSelection = useCallback(async () => {
+    if (selectedNodes.length === 0) return;
+    await copySelection();
+    onDeleteSelected();
+  }, [copySelection, onDeleteSelected, selectedNodes.length]);
+
+
+  const pasteFromClipboard = useCallback(async () => {
+    let payload: DiagramClipboardPayload | null = internalClipboardRef.current;
+    try {
+      const t = await navigator.clipboard.readText();
+      const parsed = parseDiagramClipboardText(t);
+      if (parsed) payload = parsed;
+    } catch {
+      /* use internalClipboardRef only */
+    }
+    if (!payload || payload.nodes.length === 0) return;
+
+    const clearedNodes = nodes.map((n) => ({ ...n, selected: false }));
+    const clearedEdges = edges.map((e) => ({ ...e, selected: false }));
+    const { nodes: pn, edges: pe } = remapPastedSubgraph(payload, { x: 20, y: 20 });
+    const nextNodes = [...clearedNodes, ...pn];
+    const nextEdges = [...clearedEdges, ...pe];
+    unstable_batchedUpdates(() => {
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      setSelectedNodes(pn);
+      setSelectedEdges(pe);
+    });
+    if (onNodesChangeCallback) onNodesChangeCallback(nextNodes);
+    if (onEdgesChangeCallback) onEdgesChangeCallback(nextEdges);
+  }, [nodes, edges, onNodesChangeCallback, onEdgesChangeCallback, setNodes, setEdges]);
+
+  /** Canvas shortcuts: require focus on the diagram wrapper (click toolbar/pane). Skipped in Monaco, dialogs, inputs. */
+  const handleCanvasKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (!interactive) return;
+      if (!reactFlowWrapper.current?.contains(e.target as HTMLElement)) return;
+      if (isCanvasShortcutBlocked(e.target)) return;
+
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+      if (mod && key === 'f') {
+        e.preventDefault();
+        setShowSearch(true);
+        return;
+      }
+
+      if (key === 'Escape') {
+        setShowSearch(false);
+        return;
+      }
+
+      if (mod && key === 'a') {
+        e.preventDefault();
+        onSelectAllCanvas();
+        return;
+      }
+
+      if (mod && key === 'd') {
+        e.preventDefault();
+        onDuplicateNodes();
+        return;
+      }
+
+      if (mod && key === 'c') {
+        e.preventDefault();
+        void copySelection();
+        return;
+      }
+
+      if (mod && key === 'x') {
+        e.preventDefault();
+        void cutSelection();
+        return;
+      }
+
+      if (mod && key === 'v') {
+        e.preventDefault();
+        void pasteFromClipboard();
+        return;
+      }
+    },
+    [
+      interactive,
+      copySelection,
+      cutSelection,
+      pasteFromClipboard,
+      onDuplicateNodes,
+      onSelectAllCanvas,
+    ]
+  );
 
   const onLockNodes = useCallback(() => {
     const newNodes = lockNodes(nodes, selectedNodes);
@@ -455,7 +649,14 @@ function FlowDiagramInternal({
   <div
       style={{ width: '100%', height: '100%' }}
       ref={reactFlowWrapper}
-      className={`${isDragging ? 'dragging' : ''} ${interactive ? '' : 'streaming-mode'} ${theme === 'dark' ? 'dark' : ''} relative flex flex-col`.trim()}
+      tabIndex={interactive ? 0 : -1}
+      onKeyDown={handleCanvasKeyDown}
+      onMouseDownCapture={(e) => {
+        if (!interactive) return;
+        if (isCanvasShortcutBlocked(e.target)) return;
+        reactFlowWrapper.current?.focus({ preventScroll: true });
+      }}
+      className={`outline-none ${isDragging ? 'dragging' : ''} ${interactive ? '' : 'streaming-mode'} ${theme === 'dark' ? 'dark' : ''} relative flex flex-col`.trim()}
     >
         <div className="p-2">
           <div className="flex items-center gap-3">
