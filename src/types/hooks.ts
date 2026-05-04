@@ -8,6 +8,7 @@
 import { Node, Edge } from 'reactflow';
 import { ReactFlowData } from '@/features/diagram/converter';
 import { PanelType } from '@/constants';
+import type { DiagramKind, RenderMode } from '@/features/diagram/diagramKind';
 
 // ============================================================================
 // useDiagram Hook Types
@@ -21,6 +22,9 @@ export interface SavedDiagram {
   edges: Edge[];
   createdAt: number;
   updatedAt: number;
+  /** Persisted diagram family (forward compatibility) */
+  diagramKind?: DiagramKind;
+  renderMode?: RenderMode;
 }
 
 export interface UseDiagramReturn {

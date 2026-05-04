@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Node, Edge } from "reactflow";
 import { LoadDialog } from "@/components/LoadDialog";
 import { AppHeader } from "@/components/AppHeader";
@@ -18,6 +18,11 @@ import {
   ResizablePanelGroup
 } from "@/components/ui";
 import { Toasts } from "@/components/Toasts";
+import {
+  detectDiagramKind,
+  diagramKindLabel,
+  getRenderMode,
+} from "@/features/diagram/diagramKind";
 import type {
   UseDiagramReturn,
   UseThemeReturn,
@@ -62,6 +67,16 @@ export function AppUI({
   aiPrompt,
   setAiPrompt
 }: AppUIProps) {
+  const diagramMeta = useMemo(() => {
+    const src = diagram.mermaidSource ?? "";
+    const kind = detectDiagramKind(src);
+    return {
+      kind,
+      renderMode: getRenderMode(src),
+      kindDisplayLabel: diagramKindLabel(kind),
+    };
+  }, [diagram.mermaidSource]);
+
   const flowMethodsRef = useRef<{
     openSearch?: () => void;
     exportImage?: () => Promise<void>;
@@ -95,8 +110,14 @@ export function AppUI({
   const handleSaveDiagram = useCallback(() => {
     const src = diagram.mermaidSource?.trim();
     const hasNodes = (diagram.flowData.nodes || []).length > 0;
-    if (!src || src === '' || !hasNodes) {
-      toast.showToast('Cannot save: please provide Mermaid code and at least one node', 'info');
+    const persistableNonEmpty =
+      !!src &&
+      (diagramMeta.renderMode === "mermaid-svg" || hasNodes);
+    if (!persistableNonEmpty) {
+      toast.showToast(
+        "Cannot save: add valid Mermaid code (flowcharts need parsed nodes)",
+        "info",
+      );
       return;
     }
 
@@ -111,20 +132,28 @@ export function AppUI({
       edges: diagram.flowData.edges || [],
       createdAt: now,
       updatedAt: now,
+      diagramKind: diagramMeta.kind,
+      renderMode: diagramMeta.renderMode,
     };
     const next = [item, ...diagram.savedDiagrams];
     diagram.setSavedDiagrams(next);
     diagram.lastAppliedMermaidRef.current = diagram.mermaidSource;
     toast.showToast('Diagram saved to session', 'success');
     accordion.setAccordionOpen((prev) => ({ ...prev, saved: true }));
-  }, [diagram, toast, accordion]);
+  }, [diagram, toast, accordion, diagramMeta]);
 
   // Handle export to JSON
   const handleExportToJSON = useCallback(() => {
     const src = diagram.mermaidSource?.trim();
     const hasNodes = (diagram.flowData.nodes || []).length > 0;
-    if (!src || src === '' || !hasNodes) {
-      toast.showToast('Cannot export: please provide Mermaid code and at least one node', 'info');
+    const persistableNonEmpty =
+      !!src &&
+      (diagramMeta.renderMode === "mermaid-svg" || hasNodes);
+    if (!persistableNonEmpty) {
+      toast.showToast(
+        "Cannot export: add valid Mermaid code (flowcharts need parsed nodes)",
+        "info",
+      );
       return;
     }
 
@@ -137,6 +166,8 @@ export function AppUI({
       edges: diagram.flowData.edges || [],
       createdAt: now,
       updatedAt: now,
+      diagramKind: diagramMeta.kind,
+      renderMode: diagramMeta.renderMode,
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -149,7 +180,7 @@ export function AppUI({
     a.remove();
     URL.revokeObjectURL(url);
     toast.showToast('Exported diagram as JSON', 'success');
-  }, [diagram, toast]);
+  }, [diagram, toast, diagramMeta]);
 
   // Render fullscreen view if active
   if (fullscreen.fullscreenPanel) {
@@ -158,6 +189,7 @@ export function AppUI({
         fullscreenPanel={fullscreen.fullscreenPanel}
         diagram={diagram}
         theme={theme}
+        accordion={accordion}
         toast={toast}
         showAiGenerator={dialog.showAiGenerator}
         toggleAiGenerator={dialog.toggleAiGenerator}
@@ -168,6 +200,8 @@ export function AppUI({
         setAiPrompt={setAiPrompt}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
+        canvasRenderMode={diagramMeta.renderMode}
+        canvasKindDisplayLabel={diagramMeta.kindDisplayLabel}
         onRegisterMethods={registerFlowMethods}
       />
     );
@@ -225,6 +259,7 @@ export function AppUI({
               >
                 <PreviewPanel
                   mermaidSource={diagram.mermaidSource}
+                  effectiveTheme={theme.effectiveTheme}
                   toggleFullscreen={() => fullscreen.toggleFullscreen("preview")}
                   onClose={() => panel.togglePanelVisibility("preview")}
                 />
@@ -245,6 +280,9 @@ export function AppUI({
                 edges={diagram.flowData.edges}
                 isStreaming={diagram.isStreaming}
                 theme={theme.effectiveTheme}
+                mermaidSource={diagram.mermaidSource}
+                renderMode={diagramMeta.renderMode}
+                kindDisplayLabel={diagramMeta.kindDisplayLabel}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
                 onRegisterMethods={registerFlowMethods}

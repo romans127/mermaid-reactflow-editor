@@ -1,5 +1,9 @@
 // Utilities to extract and sanitize Mermaid code from LLM output or text blobs
 
+import { MERMAID_SYNTAX_START_ALTERNATION } from "@/features/diagram/diagramKind";
+
+const KNOWN_MERMAID_START = new RegExp(`\\b(?:${MERMAID_SYNTAX_START_ALTERNATION})`, "im");
+
 // Extract mermaid code from fenced blocks or raw text. Returns inner code if fences found,
 // otherwise attempts to locate a mermaid diagram start keyword and returns from there.
 export function extractMermaidFromFences(content: string) {
@@ -13,13 +17,13 @@ export function extractMermaidFromFences(content: string) {
   const mg = content.match(genericFenced);
   if (mg && mg[1]) {
     const inner = mg[1].trim();
-    if (/\b(graph|flowchart|sequenceDiagram|stateDiagram|classDiagram|gantt|journey|erDiagram|gitGraph|pie|timeline|infoDiagram)\b/i.test(inner)) {
+    if (KNOWN_MERMAID_START.test(inner)) {
       return inner;
     }
   }
 
   // Fallback: locate first mermaid keyword and return from there
-  const rawStartRegex = /\b(graph|flowchart|sequenceDiagram|stateDiagram|classDiagram|gantt|journey|erDiagram|gitGraph|pie|timeline|infoDiagram)\b/i;
+  const rawStartRegex = new RegExp(`\\b(?:${MERMAID_SYNTAX_START_ALTERNATION})`, "im");
   const mr = content.match(rawStartRegex);
   if (mr) {
     const idx = content.indexOf(mr[0]);
@@ -59,10 +63,9 @@ export function sanitizeMermaidLabels(src: string) {
   });
 
   // Enforce single diagram: keep only the first diagram block
-  const diagRegex = /\b(graph|flowchart|sequenceDiagram|stateDiagram|classDiagram|gantt|journey|erDiagram|gitGraph|pie|timeline|infoDiagram)\b/i;
   const allStarts: number[] = [];
   let mm: RegExpExecArray | null;
-  const globalRegex = new RegExp(diagRegex.source, 'gim');
+  const globalRegex = new RegExp(`\\b(?:${MERMAID_SYNTAX_START_ALTERNATION})`, "gim");
   while ((mm = globalRegex.exec(subgraphFixed)) !== null) {
     allStarts.push(mm.index);
     if (globalRegex.lastIndex === mm.index) globalRegex.lastIndex++;

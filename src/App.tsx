@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useDiagram } from "@/hooks/useDiagram";
 import { useTheme } from "@/hooks/useTheme";
 import { usePanelVisibility } from "@/hooks/usePanelVisibility";
@@ -9,6 +9,7 @@ import { useDialog } from "@/hooks/useDialog";
 import { AppUI, AISettings } from "@/components/AppUI";
 import { DEFAULT_AI_SETTINGS } from "@/constants";
 import { logger } from "@/lib/logger";
+import { configureMermaid } from "@/features/diagram/configureMermaid";
 
 function App() {
   // Custom hooks for state management
@@ -23,6 +24,10 @@ function App() {
   // AI settings state
   const [aiSettings, setAiSettings] = useState<AISettings>(DEFAULT_AI_SETTINGS as AISettings);
   const [aiPrompt, setAiPrompt] = useState("");
+
+  useLayoutEffect(() => {
+    configureMermaid(theme.effectiveTheme);
+  }, [theme.effectiveTheme]);
 
   // Convert mermaid when source changes
   useEffect(() => {

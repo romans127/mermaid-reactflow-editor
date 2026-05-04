@@ -2,8 +2,11 @@ import { Button, Card, Popover, PopoverTrigger, PopoverContent } from "@/compone
 import { MermaidRenderer } from "@/features/diagram/MermaidRenderer";
 import { Eye, X, Maximize2, FileText, Info } from "lucide-react";
 
+import type { EffectiveTheme } from "@/types";
+
 export interface PreviewPanelProps {
   mermaidSource: string;
+  effectiveTheme: EffectiveTheme;
   toggleFullscreen: () => void;
   onClose: () => void;
   isFullscreen?: boolean;
@@ -11,6 +14,7 @@ export interface PreviewPanelProps {
 
 export function PreviewPanel({
   mermaidSource,
+  effectiveTheme,
   toggleFullscreen,
   onClose,
   isFullscreen = false,
@@ -49,7 +53,11 @@ export function PreviewPanel({
       <div className="flex-1 p-4 flex flex-col min-h-0">
         <Card className="flex-1 min-h-0 p-4 flex items-center justify-center bg-muted/30 hover:bg-muted/40 transition-colors">
           {mermaidSource ? (
-            <MermaidRenderer code={mermaidSource} className="w-full h-full min-h-0" />
+            <MermaidRenderer
+              code={mermaidSource}
+              effectiveTheme={effectiveTheme}
+              className="w-full h-full min-h-0"
+            />
           ) : (
             <div className="text-center text-muted-foreground">
               <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />

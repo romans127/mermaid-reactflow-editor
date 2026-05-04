@@ -1,5 +1,4 @@
 import { Node, Edge, MarkerType, Position } from "reactflow";
-import mermaid from "mermaid";
 import dagre from "dagre";
 import { LAYOUT_SPACING } from "@/constants/layout";
 import { LAYOUT_DIRECTIONS } from "@/constants/alignment";
@@ -9,15 +8,6 @@ export interface ReactFlowData {
   nodes: Node[];
   edges: Edge[];
 }
-
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "default",
-  flowchart: {
-    htmlLabels: false,
-    curve: "linear",
-  },
-});
 
 interface MermaidNode {
   id: string;

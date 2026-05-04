@@ -1,22 +1,23 @@
 import { Button, Badge, Card } from "@/components/ui";
-import { CodePanel } from "@/components/panels";
+import { CodePanel, CanvasPanel } from "@/components/panels";
 import { MermaidRenderer } from "@/features/diagram/MermaidRenderer";
-import { FlowDiagram } from "@/features/canvas/FlowDiagram";
 import { Minimize2, FileText } from "lucide-react";
 import { Node, Edge } from "reactflow";
 import type {
   UseDiagramReturn,
   UseThemeReturn,
   UseToastReturn,
+  UseAccordionReturn,
   FullscreenPanel,
 } from "@/types";
+import type { RenderMode } from "@/features/diagram/diagramKind";
 import { AISettings } from "@/components/AppUI";
-import { cn } from "@/lib/utils";
 
 export interface FullscreenViewProps {
   fullscreenPanel: FullscreenPanel;
   diagram: UseDiagramReturn;
   theme: UseThemeReturn;
+  accordion: UseAccordionReturn;
   toast: UseToastReturn;
   showAiGenerator: boolean;
   toggleAiGenerator: () => void;
@@ -27,17 +28,24 @@ export interface FullscreenViewProps {
   setAiPrompt: (prompt: string) => void;
   onNodesChange: (nodes: Node[]) => void;
   onEdgesChange: (edges: Edge[]) => void;
-  onRegisterMethods: (methods: {
-    openSearch?: () => void;
-    exportImage?: () => Promise<void>;
-    selectSubgraphContents?: (id?: string) => void
-  } | {}) => void;
+  canvasRenderMode: RenderMode;
+  canvasKindDisplayLabel: string;
+  onRegisterMethods: (
+    methods:
+      | {
+          openSearch?: () => void;
+          exportImage?: () => Promise<void>;
+          selectSubgraphContents?: (id?: string) => void;
+        }
+      | Record<string, never>
+  ) => void;
 }
 
 export function FullscreenView({
   fullscreenPanel,
   diagram,
   theme,
+  accordion,
   toast,
   showAiGenerator,
   toggleAiGenerator,
@@ -48,6 +56,8 @@ export function FullscreenView({
   setAiPrompt,
   onNodesChange,
   onEdgesChange,
+  canvasRenderMode,
+  canvasKindDisplayLabel,
   onRegisterMethods,
 }: FullscreenViewProps) {
   const getPanelTitle = () => {
@@ -57,7 +67,7 @@ export function FullscreenView({
       case "preview":
         return "Mermaid Preview";
       case "canvas":
-        return "React Flow Canvas";
+        return "Diagram canvas";
       default:
         return "";
     }
@@ -72,6 +82,11 @@ export function FullscreenView({
           <Badge variant="secondary" className="text-xs">
             Fullscreen
           </Badge>
+          {fullscreenPanel === "canvas" && (
+            <Badge variant="outline" className="text-xs">
+              {canvasKindDisplayLabel}
+            </Badge>
+          )}
         </div>
         <Button
           variant="outline"
@@ -128,6 +143,7 @@ export function FullscreenView({
               {diagram.mermaidSource ? (
                 <MermaidRenderer
                   code={diagram.mermaidSource}
+                  effectiveTheme={theme.effectiveTheme}
                   className="w-full h-full min-h-0"
                 />
               ) : (
@@ -142,28 +158,23 @@ export function FullscreenView({
         )}
 
         {fullscreenPanel === "canvas" && (
-          <div className="h-full flex flex-col">
-            <div className="flex-1 relative overflow-hidden">
-              <div
-                className={cn(
-                  "w-full h-full bg-background relative transition-all duration-300",
-                  "bg-[radial-gradient(circle,_theme(colors.border)_1px,_transparent_1px)] bg-[length:20px_20px]",
-                )}
-                style={{ transform: `scale(${100 / 100})` }}
-              >
-                <FlowDiagram
-                  nodes={diagram.flowData.nodes}
-                  edges={diagram.flowData.edges}
-                  interactive={!diagram.isStreaming}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onSelectionChange={() => {}}
-                  onRequestPreview={() => {}}
-                  onRegisterMethods={onRegisterMethods}
-                  theme={theme.effectiveTheme}
-                />
-              </div>
-            </div>
+          <div className="h-full flex flex-col min-h-0 bg-background">
+            <CanvasPanel
+              nodes={diagram.flowData.nodes}
+              edges={diagram.flowData.edges}
+              isStreaming={diagram.isStreaming}
+              theme={theme.effectiveTheme}
+              mermaidSource={diagram.mermaidSource}
+              renderMode={canvasRenderMode}
+              kindDisplayLabel={canvasKindDisplayLabel}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onRegisterMethods={onRegisterMethods}
+              toggleFullscreen={() => toggleFullscreen("canvas")}
+              onClose={() => toggleFullscreen("canvas")}
+              accordion={accordion}
+              isFullscreen={true}
+            />
           </div>
         )}
       </div>

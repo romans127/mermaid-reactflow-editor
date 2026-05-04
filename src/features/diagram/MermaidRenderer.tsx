@@ -4,25 +4,27 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Button } from '@/components/ui/button';
 import { Info } from 'lucide-react';
 import { logger } from '@/lib/logger';
+import type { EffectiveTheme } from '@/types';
 
 export interface MermaidRendererProps {
   code: string;
   className?: string;
   style?: React.CSSProperties;
+  /** Re-render when theme changes (Mermaid is configured in App). */
+  effectiveTheme?: EffectiveTheme;
 }
 
-export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ code, className, style }) => {
+export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ code, className, style, effectiveTheme = 'light' }) => {
   const ref = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const baseScaleRef = useRef(1);
   const [fitTick, setFitTick] = useState(0);
-  const [isInitialized, setIsInitialized] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const uniqueId = useRef(`mermaid-svg-${Math.random().toString(36).substr(2, 9)}`).current;
+  const uniqueId = useRef(`mermaid-svg-${Math.random().toString(36).slice(2, 11)}`).current;
 
   // Constants for consistent zoom limits
   const MIN_ZOOM = 1;
@@ -143,18 +145,9 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ code, classNam
   }, [MIN_ZOOM, MAX_ZOOM]);
 
   useEffect(() => {
-    if (!isInitialized) {
-      mermaid.initialize({ 
-        startOnLoad: false,
-        theme: 'default',
-        securityLevel: 'loose',
-      });
-      setIsInitialized(true);
-    }
-  }, [isInitialized]);
+    void effectiveTheme;
 
-  useEffect(() => {
-    if (!isInitialized || !ref.current) {
+    if (!ref.current) {
       return;
     }
     
@@ -269,7 +262,7 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ code, classNam
       cancelled = true;
       try { ro.disconnect(); } catch {}
     };
-  }, [code, isInitialized, uniqueId]);
+  }, [code, uniqueId, effectiveTheme]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     // allow panning at any zoom level (user expects to be able to grab/move)
