@@ -49,9 +49,19 @@ export const useDiagram = (): UseDiagramReturn => {
     }
   }, [conversionError]);
 
+  /** Canvas → Monaco: mirrors into `lastAppliedMermaidRef` first so App's convert effect skips re-parse loops. */
+  const applyMermaidFromCanvas = useCallback((source: string) => {
+    lastAppliedMermaidRef.current = source;
+    setMermaidSource(source);
+    if (conversionError) {
+      setConversionError(null);
+    }
+  }, [conversionError]);
+
   return {
     mermaidSource,
     setMermaidSource: updateMermaidSource,
+    applyMermaidFromCanvas,
     flowData,
     setFlowData,
     loading,

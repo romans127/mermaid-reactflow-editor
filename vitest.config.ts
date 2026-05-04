@@ -1,7 +1,13 @@
-import { defineConfig } from 'vitest/config';
+import path from "path";
+import { defineConfig } from "vitest/config";
 
 // Vitest configuration for unit tests
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   test: {
     globals: true,         // enable global test APIs (describe, it, expect)
     environment: 'node',    // run tests in Node environment

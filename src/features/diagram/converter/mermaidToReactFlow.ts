@@ -1711,6 +1711,8 @@ function createReactFlowElements(
         data: {
           label: subgraph.title,
           isSubgraph: true,
+          /** Preserved for canvas → Mermaid round-trip (subgraph `direction` line). */
+          subgraphDirection: subgraph.direction,
         },
         style: {
           backgroundColor: colors.bg,
@@ -1910,6 +1912,10 @@ const reactFlowEdges: Edge[] = edges.map((edge, index) => {
     target: targetId,
     label: edge.label,
     type: edgeType,
+    data: {
+      /** Original Mermaid link operator for RF → Mermaid serialization. */
+      mermaidLinkStyle: edge.type,
+    },
     animated, // Apply animation to ALL edges
     style: edgeStyle,
     labelStyle: {

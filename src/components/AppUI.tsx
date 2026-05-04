@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Node, Edge } from "reactflow";
+import { reactFlowToMermaid } from "@/features/diagram/converter";
 import { LoadDialog } from "@/components/LoadDialog";
 import { AppHeader } from "@/components/AppHeader";
 import { FullscreenView } from "@/components/FullscreenView";
@@ -96,16 +97,58 @@ export function AppUI({
     }
   }, []);
 
+  const rfToMermaidTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(
+    null
+  );
+  const flowDataSnapshotRef = useRef(diagram.flowData);
+  flowDataSnapshotRef.current = diagram.flowData;
+  const mermaidSourceSnapshotRef = useRef(diagram.mermaidSource);
+  mermaidSourceSnapshotRef.current = diagram.mermaidSource;
+  const canvasRenderModeRef = useRef(diagramMeta.renderMode);
+  canvasRenderModeRef.current = diagramMeta.renderMode;
+
+  /** Debounced (~320ms) RF → Mermaid so drag moves batch into Monaco without layout thrash. */
+  const flushRfToMonacoIfNeeded = useCallback(() => {
+    if (canvasRenderModeRef.current !== "reactflow") return;
+    const { nodes, edges } = flowDataSnapshotRef.current;
+    const serialized = reactFlowToMermaid(nodes, edges, {
+      previousSource: mermaidSourceSnapshotRef.current,
+    });
+    if (serialized.trim() === (mermaidSourceSnapshotRef.current ?? "").trim()) {
+      return;
+    }
+    diagram.applyMermaidFromCanvas(serialized);
+  }, [diagram]);
+
+  const scheduleRfToMonacoDebounced = useCallback(() => {
+    if (rfToMermaidTimerRef.current) {
+      globalThis.clearTimeout(rfToMermaidTimerRef.current);
+    }
+    rfToMermaidTimerRef.current = globalThis.setTimeout(() => {
+      rfToMermaidTimerRef.current = null;
+      flushRfToMonacoIfNeeded();
+    }, 320);
+  }, [flushRfToMonacoIfNeeded]);
+
+  useEffect(() => {
+    return () => {
+      if (rfToMermaidTimerRef.current) {
+        globalThis.clearTimeout(rfToMermaidTimerRef.current);
+      }
+    };
+  }, []);
+
   // Handle nodes change
   const handleNodesChange = useCallback((nodes: Node[]) => {
     diagram.setFlowData((prev) => ({ ...prev, nodes }));
-  }, [diagram]);
+    scheduleRfToMonacoDebounced();
+  }, [diagram, scheduleRfToMonacoDebounced]);
 
   // Handle edges change
   const handleEdgesChange = useCallback((edges: Edge[]) => {
     diagram.setFlowData((prev) => ({ ...prev, edges }));
-  }, [diagram]);
-
+    scheduleRfToMonacoDebounced();
+  }, [diagram, scheduleRfToMonacoDebounced]);
   // Handle save diagram
   const handleSaveDiagram = useCallback(() => {
     const src = diagram.mermaidSource?.trim();

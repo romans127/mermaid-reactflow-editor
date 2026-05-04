@@ -29,7 +29,8 @@ function App() {
     configureMermaid(theme.effectiveTheme);
   }, [theme.effectiveTheme]);
 
-  // Convert mermaid when source changes
+  // Monaco→RF converts when editor text differs from lastApplied hook ref.
+  // Canvas→Monaco writes via applyMermaidFromCanvas(); it primes lastApplied first so this skips redundant converts.
   useEffect(() => {
     if (diagram.mermaidSource.trim() && diagram.mermaidSource !== diagram.lastAppliedMermaidRef.current) {
       diagram.convertMermaid(diagram.mermaidSource);

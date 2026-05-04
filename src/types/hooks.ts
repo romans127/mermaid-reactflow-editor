@@ -30,6 +30,8 @@ export interface SavedDiagram {
 export interface UseDiagramReturn {
   mermaidSource: string;
   setMermaidSource: (source: string) => void;
+  /** Updates Monaco text from the canvas without re-invoking parse (lastApplied mirror). */
+  applyMermaidFromCanvas: (source: string) => void;
   flowData: ReactFlowData;
   setFlowData: React.Dispatch<React.SetStateAction<ReactFlowData>>;
   loading: boolean;

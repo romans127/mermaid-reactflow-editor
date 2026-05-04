@@ -173,13 +173,14 @@ function FlowDiagramInternal({
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      setEdges((eds) =>
-        addEdge(
+      setEdges((eds) => {
+        const next = addEdge(
           {
             ...connection,
             type: 'smoothstep',
             animated: true,
             style: { stroke: '#1976D2', strokeWidth: 2.5 },
+            data: { mermaidLinkStyle: '-->' },
             markerEnd: {
               type: MarkerType.ArrowClosed,
               width: 20,
@@ -188,10 +189,12 @@ function FlowDiagramInternal({
             },
           },
           eds
-        )
-      );
+        );
+        if (onEdgesChangeCallback) onEdgesChangeCallback(next);
+        return next;
+      });
     },
-    [setEdges]
+    [setEdges, onEdgesChangeCallback]
   );
 
   const onEdgeClick = useCallback(
